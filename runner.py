@@ -95,9 +95,12 @@ def stage_convert(args: argparse.Namespace) -> None:
     from data.demo_loader import convert_demos
 
     raw = os.path.join(
-        args.project_dir, "demos", args.env_id, "motionplanning", "trajectory.h5"
+        args.project_dir, "demos", args.env_id, "rl", "trajectory.none.pd_ee_delta_pos.physx_cuda.h5"
     )
-    converted = raw.replace("trajectory.h5", "trajectory.rgb.pd_ee_delta_pos.cpu.h5")
+    converted = raw.replace(
+        "trajectory.none.pd_ee_delta_pos.physx_cuda.h5",
+        "trajectory.rgb.pd_ee_delta_pos.cpu.h5"
+    )
 
     if not args.force and os.path.exists(converted):
         print(f"[convert] Converted file already exists: {converted}")
@@ -107,7 +110,6 @@ def stage_convert(args: argparse.Namespace) -> None:
         traj_path=raw,
         obs_mode="rgb",
         control_mode="pd_ee_delta_pos",
-        num_procs=args.num_procs,
     )
 
 
@@ -126,7 +128,7 @@ def stage_train(args: argparse.Namespace) -> None:
     else:
         converted_traj = os.path.join(
             project_dir,
-            "demos", args.env_id, "motionplanning",
+            "demos", args.env_id, "rl",
             "trajectory.rgb.pd_ee_delta_pos.cpu.h5",
         )
         cfg = Config(
@@ -202,7 +204,7 @@ def stage_replay(args: argparse.Namespace) -> None:
     from data import load_demo_metadata, replay_episode
 
     traj_path = os.path.join(
-        args.project_dir, "demos", args.env_id, "motionplanning", "trajectory.h5"
+        args.project_dir, "demos", args.env_id, "rl", "trajectory.none.pd_ee_delta_pos.physx_cuda.h5"
     )
     if not os.path.exists(traj_path):
         sys.exit(f"[replay] Demo file not found: {traj_path}\nRun 'download' first.")

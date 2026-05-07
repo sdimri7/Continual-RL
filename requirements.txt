@@ -1,23 +1,5 @@
-# ── Diffusion Policy on Push-T ─────────────────────────────────────────────
-#
-# Install (inside your venv / conda env):
-#
-#   pip install -r requirements.txt
-#
-# macOS note:
-#   mani_skill, gym-pusht and gym-pusht's pygame dependency all require
-#   Linux + NVIDIA GPU. Install them only on Colab / a Linux GPU machine.
-#   The lines are commented out below so a plain `pip install -r requirements.txt`
-#   works on macOS without errors.
-#
-# Colab / Linux note:
-#   Uncomment the Linux-only section before running pip install,
-#   or let setup/install.py handle it automatically via full_setup().
-# ───────────────────────────────────────────────────────────────────────────
-
-
 # ── deep learning ───────────────────────────────────────────────────────────
-torch>=2.11.0
+torch==2.11.0+cu129
 torchvision>=0.22.0          # paired with torch for vision utilities
 
 
@@ -28,7 +10,7 @@ einops>=0.8.2                 # tensor rearrangement in UNet (rearrange)
 
 # ── data ────────────────────────────────────────────────────────────────────
 h5py>=3.16.0                  # loading ManiSkill trajectory .h5 files
-zarr>=3.2.1                   # efficient array storage for demo datasets
+zarr                  # efficient array storage for demo datasets
 numpy>=2.4.4
 
 
@@ -43,5 +25,5 @@ tensorboard>=2.0.0            # training curve logging (install separately on Co
 
 
 # ── Linux / Colab only (uncomment when running on a Linux + NVIDIA machine) ─
-# mani_skill>=3.0.1           # GPU-accelerated robotics simulator (requires Vulkan)
-# gym-pusht>=0.1.0            # Push-T task (depends on pygame which needs SDL2)
+mani_skill>=3.0.1           # GPU-accelerated robotics simulator (requires Vulkan)
+gym-pusht>=0.1.0            # Push-T task (depends on pygame which needs SDL2)

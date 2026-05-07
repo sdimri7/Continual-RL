@@ -188,10 +188,12 @@ If Colab disconnects mid-training, set `resume_from` in Cell 5 to the path of th
 
 ## Dependencies
 
+pip install torch==2.11.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+
 | Package | Purpose |
 |---|---|
 | `mani_skill` | GPU-accelerated robotics simulator |
-| `torch` | Neural network training |
 | `diffusers` | DDPM scheduler |
 | `einops` | Tensor reshaping inside UNet |
 | `gym-pusht` | Push-T task registration |

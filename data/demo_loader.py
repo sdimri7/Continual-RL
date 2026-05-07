@@ -41,7 +41,7 @@ def download_demos(
         Path to the demo directory for ``env_id``.
     """
     demo_dir = os.path.join(output_dir, env_id)
-    traj_file = os.path.join(demo_dir, "motionplanning", "trajectory.h5")
+    traj_file = os.path.join(demo_dir, "rl", "trajectory.none.pd_ee_delta_pos.physx_cuda.h5")
 
     if not force and os.path.exists(traj_file):
         print(f"[data] Demos already present at {demo_dir}. Skipping download.")
@@ -81,7 +81,7 @@ def convert_demos(
         f'python -m mani_skill.trajectory.replay_trajectory '
         f'--traj-path "{traj_path}" --save-traj '
         f'--obs-mode {obs_mode} -c "{control_mode}" '
-        f'--num-procs {num_procs} {count_flag}'
+        f'{count_flag}'
     )
     print(f"[data] Converting demos (obs_mode={obs_mode}, control_mode={control_mode}) …")
     subprocess.run(cmd, shell=True, check=True)
