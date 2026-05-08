@@ -71,6 +71,13 @@ class PushTDemoDataset(Dataset):
                 actions = traj[self.action_key][:]  # (T, action_dim)
                 T = len(actions)
 
+                if obs is None or len(obs) == 0:
+                    # No obs stored in HDF5 - this happens with "none" obs mode
+                    # Create dummy observations from action space dim
+                    action_dim = actions.shape[-1]
+                    obs = np.zeros((T, action_dim), dtype=np.float32)
+                    print(f"  [dataset] No obs in HDF5, using dummy zeros (action_dim={action_dim})")
+
                 if pad_before:
                     pad_obs = np.repeat(obs[:1], self.obs_horizon - 1, axis=0)
                     obs = np.concatenate([pad_obs, obs], axis=0)
@@ -83,21 +90,25 @@ class PushTDemoDataset(Dataset):
 
         print(f"[dataset] {len(self._samples)} samples loaded.")
 
-    def _read_obs(self, traj: h5py.Group) -> np.ndarray:
-        keys = self.obs_key.split("/")
-        node = traj
-        for k in keys:
-            node = node[k]
-        obs = node[:]  # (T, …)
+    def _read_obs(self, traj: h5py.Group) -> np.ndarray | None:
+        """Read observations from trajectory. Returns None if obs key not found."""
+        try:
+            keys = self.obs_key.split("/")
+            node = traj
+            for k in keys:
+                node = node[k]
+            obs = node[:]  # (T, …)
 
-        if self.image_size is not None and obs.ndim == 4:
-            obs = self._resize_images(obs)
+            if self.image_size is not None and obs.ndim == 4:
+                obs = self._resize_images(obs)
 
-        obs = obs.astype(np.float32)
-        if obs.max() > 1.5:
-            obs = obs / 255.0  # normalise uint8 images to [0, 1]
+            obs = obs.astype(np.float32)
+            if obs.max() > 1.5:
+                obs = obs / 255.0  # normalise uint8 images to [0, 1]
 
-        return obs
+            return obs
+        except (KeyError, TypeError):
+            return None
 
     def _resize_images(self, imgs: np.ndarray) -> np.ndarray:
         """Resize a batch of (T, H, W, C) images using cv2 if available."""

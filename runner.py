@@ -32,7 +32,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # Default data root — override with --project-dir
-DEFAULT_PROJECT_DIR = os.path.join(os.path.expanduser("~"), "continual_rl")
+DEFAULT_PROJECT_DIR = PROJECT_ROOT
+print("////////////////////////////////",PROJECT_ROOT)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -97,13 +98,9 @@ def stage_convert(args: argparse.Namespace) -> None:
     raw = os.path.join(
         args.project_dir, "demos", args.env_id, "rl", "trajectory.none.pd_ee_delta_pos.physx_cuda.h5"
     )
-    converted = raw.replace(
-        "trajectory.none.pd_ee_delta_pos.physx_cuda.h5",
-        "trajectory.rgb.pd_ee_delta_pos.cpu.h5"
-    )
 
-    if not args.force and os.path.exists(converted):
-        print(f"[convert] Converted file already exists: {converted}")
+    if not args.force and os.path.exists(raw.replace("trajectory.none.", "trajectory.rgb.")):
+        print(f"[convert] Converted file already exists")
         return
 
     convert_demos(
@@ -126,10 +123,11 @@ def stage_train(args: argparse.Namespace) -> None:
         print(f"[train] Loading config from {config_path}")
         cfg = Config.load(config_path)
     else:
+        # ManiSkill naming convention: trajectory.{obs_mode}.{control_mode}.physx_cuda.h5
         converted_traj = os.path.join(
             project_dir,
             "demos", args.env_id, "rl",
-            "trajectory.rgb.pd_ee_delta_pos.cpu.h5",
+            "trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5",
         )
         cfg = Config(
             env=EnvConfig(
@@ -252,7 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument("--env-id", default="PushT-v1")
     p_dl.add_argument("--force", action="store_true", help="Re-download even if present.")
 
-    # ── convert ────────────────────────────────────────────────────────────
+    # ── convert ───────────────────────────────────────────────────────────
     p_cv = sub.add_parser("convert", help="Convert demos to rgb + pd_ee_delta_pos.")
     p_cv.add_argument("--env-id", default="PushT-v1")
     p_cv.add_argument("--num-procs", type=int, default=2)

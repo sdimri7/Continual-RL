@@ -78,7 +78,7 @@ class Trainer:
             shuffle=True,
             num_workers=2,
             pin_memory=True,
-            drop_last=True,
+            drop_last=False,
         )
         print(f"[trainer] Dataset ready: {len(dataset)} samples.")
 
@@ -258,9 +258,33 @@ class Trainer:
 
     # ── obs extraction helper ──────────────────────────────────────────────
     def _extract_obs(self, obs) -> torch.Tensor:
-        if "sensor_data" in obs:
-            img = obs["sensor_data"]["base_camera"]["rgb"]  # (B, H, W, C) uint8
+        # Handle both RGB (dict) and state (tensor) observation modes
+        if isinstance(obs, dict):
+            if "sensor_data" in obs:
+                img = obs["sensor_data"]["base_camera"]["rgb"]  # (B, H, W, C) uint8
+            elif "rgb" in obs:
+                img = obs["rgb"]
+            else:
+                # Assume obs contains the tensor directly
+                img = obs
         else:
-            img = obs["rgb"]
-        img = img.float() / 255.0
+            # State mode - obs is already a tensor
+            img = obs
+        
+        # Normalize RGB images to [0, 1]
+        if img.dtype == torch.uint8 or img.max() > 1.5:
+            img = img.float() / 255.0
+        
+
+        # Resize images to match training resolution (96x96 by default)
+        if self.cfg.env.obs_mode == "rgb" and img.ndim == 4:
+            B, H, W, C = img.shape
+            target_size = (self.cfg.env.image_size, self.cfg.env.image_size)
+            if H != target_size[0] or W != target_size[1]:
+                # Reshape to (B, C, H, W) for interpolate, resize, reshape back
+                img = img.permute(0, 3, 1, 2)  # (B, C, H, W)
+                img = torch.nn.functional.interpolate(
+                    img, size=target_size, mode="bilinear", align_corners=False
+                )
+                img = img.permute(0, 2, 3, 1)  # (B, H, W, C)
         return img.to(self.device)

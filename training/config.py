@@ -42,7 +42,7 @@ class TrainConfig:
     normalizer_path: str = "/content/drive/MyDrive/continual_rl/normalizer_stats.npz"
 
     # optimisation
-    num_epochs: int = 100
+    num_epochs: int = 5
     batch_size: int = 256
     lr: float = 1e-4
     weight_decay: float = 1e-6
