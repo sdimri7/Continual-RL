@@ -1,0 +1,34 @@
+{
+  "env_info": {
+    "env_id": "PushT-v1",
+    "env_kwargs": {
+      "num_envs": 1,
+      "reconfiguration_freq": 1,
+      "human_render_camera_configs": {
+        "shader_pack": "default"
+      },
+      "obs_mode": "rgb",
+      "render_mode": "rgb_array",
+      "sim_backend": "physx_cuda",
+      "control_mode": "pd_ee_delta_pos",
+      "reward_mode": null
+    },
+    "max_episode_steps": 100
+  },
+  "commit_info": null,
+  "episodes": [
+    {
+      "episode_id": 0,
+      "episode_seed": 562118862,
+      "control_mode": "pd_ee_delta_pos",
+      "elapsed_steps": 100,
+      "reset_kwargs": {
+        "options": null,
+        "seed": [
+          562118862
+        ]
+      },
+      "success": true
+    }
+  ]
+}

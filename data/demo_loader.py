@@ -86,12 +86,10 @@ def convert_demos(
     print(f"[data] Converting demos (obs_mode={obs_mode}, control_mode={control_mode}) …")
     subprocess.run(cmd, shell=True, check=True)
 
-    # Infer output path from ManiSkill naming convention
-    stem = Path(traj_path).stem
-    out = traj_path.replace(
-        f"{stem}.h5",
-        f"{stem}.{obs_mode}.{control_mode}.cpu.h5",
-    )
+    # ManiSkill naming convention: trajectory.{obs_mode}.{control_mode}.physx_cuda.h5
+    # e.g., trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5
+    # Input: trajectory.none.pd_ee_delta_pos.physx_cuda.h5 -> Output: trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5
+    out = traj_path.replace("trajectory.none.", f"trajectory.{obs_mode}.")
     print(f"[data] Converted demos saved to {out}.")
     return out
 
@@ -139,7 +137,7 @@ def replay_episode(
         fps: Output video frame-rate.
 
     Returns:
-        Path to the saved video file.
+        Path to the saved video.
     """
     import gymnasium as gym
     import mani_skill.envs  # noqa: F401
