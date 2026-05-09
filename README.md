@@ -47,8 +47,8 @@ Observation (2 frames of 96×96 RGB)
         │
         ▼
 ┌─────────────────────┐
-│  ObservationEncoder │  Small CNN → 256-dim vector
-│  (4 conv layers)    │
+│  ObservationEncoder │  ResNet-18 → 256-dim vector
+│  (GAP + 2-layer MLP)│
 └─────────┬───────────┘
           │ obs_cond (256-d)
           │
@@ -87,6 +87,17 @@ Observation (2 frames of 96×96 RGB)
 **Training loss:** MSE between the true noise `ε` and the predicted noise `ε̂`.
 
 **Inference:** Start from `x_T ~ N(0,I)`, run 20 DDPM denoising steps to recover `x_0` (the clean action sequence), execute the first 8 actions.
+
+### Visual Encoder
+
+Following the original Diffusion Policy paper (Section 4.3 and Appendix C.1), we use a **ResNet-18** (pretrained on ImageNet) as the visual encoder:
+
+- ResNet-18 backbone with **ELU activations** (replacing standard ReLU as per Appendix C.1)
+- The final global average pooling layer and FC layer are removed to obtain spatial feature maps
+- Global average pooling produces a 512-d feature vector
+- A **2-layer MLP projection** (Linear → ELU → Linear) maps this to the 256-d observation conditioning vector
+
+This provides significantly better feature depth and receptive field compared to a simple 4-layer CNN, enabling more accurate tracking of the T-block's orientation and spatial relationships.
 
 ### Key numbers (defaults)
 
@@ -134,7 +145,8 @@ Continual-RL/
 │   │                             - FiLM              (conditioning injection)
 │   │                             - ResBlock1D        (1-D residual block)
 │   │                             - ConditionalUNet1D (noise predictor)
-│   │                             - ObservationEncoder (CNN or MLP)
+│   │                             - ResNet18Encoder   (ResNet-18 visual encoder)
+│   │                             - ObservationEncoder (ResNet-18 or MLP)
 │   └── diffusion_policy.py    ← DiffusionPolicy: ties encoder + UNet + DDPM
 │                                 scheduler together. Exposes compute_loss()
 │                                 for training and predict_action() for eval.
@@ -199,3 +211,4 @@ pip install torch==2.11.0 torchvision torchaudio --index-url https://download.py
 | `gym-pusht` | Push-T task registration |
 | `zarr` | Efficient trajectory storage |
 | `tensorboard` | Training curve logging |
+| `torchvision` | ResNet-18 pretrained weights |

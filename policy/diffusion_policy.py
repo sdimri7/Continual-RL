@@ -3,8 +3,8 @@ Diffusion Policy: wraps the UNet noise predictor with a DDPM scheduler.
 
 Reference: Chi et al. 2023, https://arxiv.org/abs/2303.04137
 
-Checkpoints are saved / loaded from a Drive-backed path so training state
-survives Colab runtime restarts.
+Checkpoints are managed via the training config paths, which are set
+relative to the project root directory.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ class DiffusionPolicy(nn.Module):
 
     # ── checkpoint helpers ─────────────────────────────────────────────────
     def save(self, path: str) -> None:
-        """Save model weights to Drive-backed path."""
+        """Save model weights to specified path."""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save(self.state_dict(), path)
         print(f"[policy] Saved checkpoint → {path}")
@@ -170,8 +170,10 @@ def load_policy(path: str, **policy_kwargs) -> DiffusionPolicy:
 
     Example
     -------
+    >>> from utils.project import get_checkpoint_dir
+    >>> import os
     >>> policy = load_policy(
-    ...     "/content/drive/MyDrive/continual_rl/checkpoints/epoch_50.pt",
+    ...     os.path.join(get_checkpoint_dir(), "epoch_50.pt"),
     ...     obs_mode="image", obs_horizon=2, obs_shape=(96, 96, 3),
     ...     action_dim=2, pred_horizon=16, action_horizon=8,
     ... )

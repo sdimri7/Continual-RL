@@ -1,7 +1,7 @@
 """
 Demo downloading, loading, and replay utilities.
 
-All IO goes through Drive-backed paths so nothing is lost on runtime restart.
+All IO uses project root-relative paths via utils/project.py.
 """
 
 from __future__ import annotations
@@ -18,28 +18,34 @@ from mani_skill.trajectory.utils import dict_to_list_of_dicts
 
 
 # ── constants ──────────────────────────────────────────────────────────────
-DRIVE_DEMOS_ROOT = "/content/drive/MyDrive/continual_rl/demos"
 PUSHT_ENV_ID = "PushT-v1"
+
+
+def _get_demos_root() -> str:
+    """Get the demos directory, using project root detection."""
+    from utils.project import get_project_root
+    return os.path.join(get_project_root(), "demos")
 
 
 # ── download ───────────────────────────────────────────────────────────────
 def download_demos(
     env_id: str = PUSHT_ENV_ID,
-    output_dir: str = DRIVE_DEMOS_ROOT,
+    output_dir: str = None,
     force: bool = False,
 ) -> str:
     """Download ManiSkill demonstration data for an environment.
 
-    Files are stored on Drive so they persist across sessions.
-
     Args:
         env_id: ManiSkill task ID.
-        output_dir: Root directory under which demos are saved.
+        output_dir: Root directory under which demos are saved. 
+                   Defaults to project demos directory.
         force: Re-download even if the directory already exists.
 
     Returns:
         Path to the demo directory for ``env_id``.
     """
+    if output_dir is None:
+        output_dir = _get_demos_root()
     demo_dir = os.path.join(output_dir, env_id)
     traj_file = os.path.join(demo_dir, "rl", "trajectory.none.pd_ee_delta_pos.physx_cuda.h5")
 

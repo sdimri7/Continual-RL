@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-One-time environment setup for Google Colab.
+One-time environment setup for Google Colab and local development.
 
 Run `full_setup()` once after every runtime restart.
-All heavy packages are cached to Drive so pip skips re-downloading
-on subsequent sessions (when the target directory already exists).
+On Colab: Vulkan is configured and packages are cached locally.
+On local: Prints install advice instead of auto-installing.
 
-When run locally (not on Colab), Vulkan setup is skipped and packages
-are installed into the normal Python environment instead of Drive.
+Usage:
+    from setup.install import full_setup
+    full_setup()
 """
 
 import os
@@ -24,9 +25,15 @@ def _is_colab() -> bool:
         return False
 
 
-# -- paths -------------------------------------------------------------------
-DRIVE_ROOT = "/content/drive/MyDrive"
-PACKAGES_DIR = os.path.join(DRIVE_ROOT, "continual_rl_packages")
+def _get_packages_dir() -> str:
+    """Get the packages directory for caching.
+    
+    On Colab: uses /tmp for ephemeral caching (faster after first run).
+    On local: returns None (shouldn't use caching).
+    """
+    if _is_colab():
+        return "/tmp/continual_rl_packages"
+    return None
 
 
 # -- helpers -----------------------------------------------------------------
@@ -97,17 +104,19 @@ def _local_install_advice(packages: list) -> None:
 
 
 # -- packages ----------------------------------------------------------------
-def install_packages(target_dir: str = PACKAGES_DIR) -> None:
+def install_packages(target_dir: str = None) -> None:
     """Install Python dependencies.
 
-    On Colab:  installs into ``target_dir`` on Drive so subsequent restarts
+    On Colab:  installs into ``target_dir`` so subsequent restarts
                skip the download entirely (~10 s vs ~3 min).
     Locally:   installs normally into the active Python environment;
                ``target_dir`` is ignored.
 
     Args:
-        target_dir: Drive directory used for caching on Colab.
+        target_dir: Directory used for caching on Colab. Defaults to /tmp.
     """
+    if target_dir is None:
+        target_dir = _get_packages_dir()
     packages = [
         "torch",
         "torchvision",
@@ -139,16 +148,16 @@ def install_packages(target_dir: str = PACKAGES_DIR) -> None:
 
 
 # -- combined entry point ----------------------------------------------------
-def full_setup(packages_dir: str = PACKAGES_DIR) -> None:
+def full_setup(packages_dir: str = None) -> None:
     """One-liner called at the top of every session (Colab or local).
 
     On Colab:
         1. Configures Vulkan for GPU rendering (ephemeral, must redo each session).
-        2. Installs pip packages into Drive cache (fast after first run).
+        2. Installs pip packages into cache (fast after first run).
 
     Locally (macOS / Linux):
         1. Skips Vulkan entirely.
-        2. Installs pip packages into the active Python environment.
+        2. Prints install advice.
     """
     setup_vulkan()
     install_packages(packages_dir)

@@ -15,11 +15,185 @@ SinusoidalPosEmb     – sinusoidal diffusion-timestep embedding.
 from __future__ import annotations
 
 import math
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+
+
+# ── ResNet building blocks ──────────────────────────────────────────────────
+
+class BasicBlock(nn.Module):
+    """Basic residual block for ResNet.
+    
+    Uses ELU activations as specified in Appendix C.1 of the Diffusion Policy paper.
+    """
+    expansion = 1
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = F.elu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.elu(out)
+        return out
+
+
+class ResNet18(nn.Module):
+    """Custom ResNet-18 implementation (without final pooling and FC layer).
+
+    As per the original Diffusion Policy paper (Section 4.3 and Appendix C.1),
+    we use ResNet-18 as the visual encoder with ELU activations instead of ReLU,
+    and global average pooling to produce a 256-d feature vector.
+    """
+
+    def __init__(self, pretrained: bool = True) -> None:
+        super().__init__()
+        # Initial convolution (conv1 in standard ResNet)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ELU(inplace=True)  # ELU as per Appendix C.1
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        # Residual layers (2 blocks each)
+        self.layer1 = self._make_layer(64, 64, 2, stride=1)
+        self.layer2 = self._make_layer(64, 128, 2, stride=2)
+        self.layer3 = self._make_layer(128, 256, 2, stride=2)
+        self.layer4 = self._make_layer(256, 512, 2, stride=2)
+
+        # Try to load pretrained weights from torchvision
+        if pretrained:
+            self._load_pretrained_weights()
+        else:
+            self._init_weights()
+
+    def _init_weights(self) -> None:
+        """Initialize weights with Kaiming initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def _load_pretrained_weights(self) -> None:
+        """Try to load pretrained ResNet-18 weights from torchvision."""
+        try:
+            # Try the newer torchvision API first
+            from torchvision.models import resnet18, ResNet18_Weights
+            pretrained_model = resnet18(weights=ResNet18_Weights.DEFAULT)
+        except Exception:
+            try:
+                # Fall back to older torchvision API
+                from torchvision.models import resnet18
+                pretrained_model = resnet18(pretrained=True)
+            except Exception:
+                pretrained_model = None
+
+        if pretrained_model is not None:
+            # Copy pretrained weights (excluding final fc and avgpool which we don't use)
+            state_dict = pretrained_model.state_dict()
+            # Remove fc and avgpool weights if present
+            state_dict = {k: v for k, v in state_dict.items() 
+                         if 'fc' not in k and 'avgpool' not in k}
+            try:
+                self.load_state_dict(state_dict, strict=False)
+                print("[ResNet18] Loaded pretrained ImageNet weights")
+            except Exception:
+                self._init_weights()
+                print("[ResNet18] Failed to load pretrained weights, using random initialization")
+        else:
+            self._init_weights()
+            print("[ResNet18] No pretrained weights available, using random initialization")
+
+    def _make_layer(self, in_channels: int, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
+        layers: List[nn.Module] = []
+        layers.append(BasicBlock(in_channels, out_channels, stride))
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, 3, H, W)
+
+        Returns:
+            feat_map: (B, 512, H/32, W/32)
+        """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        return x
+
+
+class ResNet18Encoder(nn.Module):
+    """ResNet-18 visual encoder (without final pooling and FC layer).
+
+    As per the original Diffusion Policy paper (Section 4.3 and Appendix C.1):
+    - Uses ResNet-18 backbone with ELU activations
+    - Global average pooling produces a 512-d feature vector
+    - 2-layer MLP projection maps to the required observation conditioning dimension
+
+    The network takes RGB frames and outputs a fixed-size embedding.
+    Uses pretrained ImageNet weights when available.
+    """
+
+    def __init__(self, out_dim: int = 256, pretrained: bool = True) -> None:
+        super().__init__()
+        # Use ResNet-18 with pretrained weights by default
+        self.backbone = ResNet18(pretrained=pretrained)
+
+        # Global average pooling to get 512-d vector
+        self.gap = nn.AdaptiveAvgPool2d(1)
+
+        # 2-layer MLP projection as per Appendix C.1 of the paper
+        self.proj = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ELU(),
+            nn.Linear(512, out_dim),
+        )
+
+        self.out_dim = out_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, C, H, W) - RGB frames
+
+        Returns:
+            feat: (B, out_dim)
+        """
+        # Get spatial feature maps from ResNet backbone
+        feat_map = self.backbone(x)  # (B, 512, H/32, W/32)
+
+        # Global average pooling
+        pooled = self.gap(feat_map).squeeze(-1).squeeze(-1)  # (B, 512)
+
+        # 2-layer MLP projection to output dimension
+        return self.proj(pooled)
 
 
 # ── sinusoidal timestep embedding ──────────────────────────────────────────
@@ -196,7 +370,7 @@ class ObservationEncoder(nn.Module):
 
     Supports two modes:
 
-    * ``"image"``  – stacked RGB frames passed through a lightweight CNN.
+    * ``"image"``  – stacked RGB frames passed through ResNet-18 encoder.
     * ``"state"``  – flat state vectors projected by an MLP.
 
     Args:
@@ -220,21 +394,19 @@ class ObservationEncoder(nn.Module):
         self.obs_horizon = obs_horizon
 
         if obs_mode == "image":
+            # ResNet-18 expects 3-channel input
             H, W, C = obs_shape
-            in_channels = C * obs_horizon
-            self.encoder = nn.Sequential(
-                nn.Conv2d(in_channels, 32, 8, stride=4),
-                nn.ReLU(),
-                nn.Conv2d(32, 64, 4, stride=2),
-                nn.ReLU(),
-                nn.Conv2d(64, 64, 3, stride=1),
-                nn.ReLU(),
-                nn.Flatten(),
+            in_channels = C  # ResNet expects 3 channels per frame
+
+            # ResNet-18 encoder with global average pooling → 256-d
+            # Pretrained weights are loaded by default
+            self.encoder = ResNet18Encoder(out_dim=out_dim, pretrained=True)
+
+            # For multi-frame input, we blend frames using a learned projection
+            self.temporal_blend = nn.Conv2d(
+                in_channels * obs_horizon, in_channels, kernel_size=1
             )
-            # Compute CNN output size
-            dummy = torch.zeros(1, in_channels, H, W)
-            cnn_out = self.encoder(dummy).shape[-1]
-            self.proj = nn.Linear(cnn_out, out_dim)
+            self._obs_horizon = obs_horizon
         else:
             state_dim = math.prod(obs_shape) * obs_horizon
             self.encoder = nn.Sequential(
@@ -247,6 +419,14 @@ class ObservationEncoder(nn.Module):
 
         self.out_dim = out_dim
 
+    @property
+    def obs_horizon(self) -> int:
+        return self._obs_horizon
+
+    @obs_horizon.setter
+    def obs_horizon(self, value: int) -> None:
+        self._obs_horizon = value
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -258,9 +438,17 @@ class ObservationEncoder(nn.Module):
         B = obs.shape[0]
         if self.obs_mode == "image":
             # (B, T, H, W, C) → (B, T*C, H, W)
-            obs = rearrange(obs, "b t h w c -> b (t c) h w")
-            feats = self.encoder(obs)
-            return self.proj(feats)
+            obs_stacked = rearrange(obs, "b t h w c -> b (t c) h w")
+
+            # Blend temporal frames to single 3-channel input
+            if self._obs_horizon > 1:
+                obs_blended = self.temporal_blend(obs_stacked)
+            else:
+                obs_blended = obs_stacked
+
+            # Encode with ResNet-18
+            feats = self.encoder(obs_blended)
+            return feats
         else:
             obs = obs.reshape(B, -1)
             return self.proj(self.encoder(obs))

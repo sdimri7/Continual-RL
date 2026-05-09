@@ -13,24 +13,27 @@ from mani_skill.utils.wrappers import RecordEpisode
 
 
 class DriveRecordEpisode(RecordEpisode):
-    """RecordEpisode that automatically saves to a Drive-backed output dir.
+    """RecordEpisode that automatically saves to a project-backed output dir.
 
     On first use it creates the directory if it doesn't exist.
+    Uses project root detection to avoid hardcoded paths.
 
     Usage
     -----
-    >>> env = DriveRecordEpisode(base_env, drive_root="/content/drive/MyDrive/continual_rl")
+    >>> from utils.project import get_project_root
+    >>> env = DriveRecordEpisode(base_env, output_dir=os.path.join(get_project_root(), "eval_videos"))
     """
 
     def __init__(
         self,
         env: gym.Env,
-        drive_root: str = "/content/drive/MyDrive/continual_rl",
-        subdir: str = "videos",
+        output_dir: str = None,
         max_steps_per_video: int = 200,
         save_trajectory: bool = False,
     ) -> None:
-        output_dir = os.path.join(drive_root, subdir)
+        if output_dir is None:
+            from utils.project import get_eval_video_dir
+            output_dir = get_eval_video_dir()
         os.makedirs(output_dir, exist_ok=True)
         super().__init__(
             env,
@@ -38,7 +41,6 @@ class DriveRecordEpisode(RecordEpisode):
             save_trajectory=save_trajectory,
             max_steps_per_video=max_steps_per_video,
         )
-        self._drive_root = drive_root
 
     @property
     def drive_root(self) -> str:
