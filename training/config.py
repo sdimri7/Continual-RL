@@ -52,6 +52,7 @@ class TrainConfig:
     # evaluation
     eval_every: int = 50
     eval_episodes: int = 10
+    eval_video_every: int = 50 # New parameter for video saving frequency
     eval_video_dir: str = ""
 
     # logging
@@ -115,11 +116,53 @@ class Config:
     
     @classmethod
     def load(cls, path: str) -> "Config":
-        """Load config from JSON file."""
+        """Load config from JSON file.
+        
+        When loading from a saved config, the paths are already complete (including run_id
+        subdirectory), so we skip the __post_init__ path modification to avoid double-appending.
+        """
         import json
         with open(path, "r") as f:
             d = json.load(f)
-        return cls.from_dict(d)
+        
+        train_data = d.get("train", {})
+        
+        # Extract the complete paths from the loaded config (they include run_id subdirectory)
+        complete_ckpt_dir = train_data.get("ckpt_dir", "")
+        complete_eval_dir = train_data.get("eval_video_dir", "")
+        complete_log_dir = train_data.get("log_dir", "")
+        
+        # Create config with empty base directories so __post_init__ won't modify them
+        train_config = TrainConfig(
+            demo_path=train_data.get("demo_path", ""),
+            normalizer_path=train_data.get("normalizer_path", ""),
+            num_epochs=train_data.get("num_epochs", 3000),
+            batch_size=train_data.get("batch_size", 256),
+            lr=train_data.get("lr", 1e-4),
+            weight_decay=train_data.get("weight_decay", 1e-6),
+            lr_warmup_steps=train_data.get("lr_warmup_steps", 500),
+            ckpt_dir="",  # Empty so __post_init__ won't modify
+            save_every=train_data.get("save_every", 200),
+            resume_from=train_data.get("resume_from"),
+            eval_every=train_data.get("eval_every", 50),
+            eval_episodes=train_data.get("eval_episodes", 10),
+            eval_video_every=train_data.get("eval_video_every", 50), # New parameter for video saving frequency
+            eval_video_dir="",  # Empty so __post_init__ won't modify
+            log_dir="",  # Empty so __post_init__ won't modify
+            use_tensorboard=train_data.get("use_tensorboard", True),
+            run_id=train_data.get("run_id", ""),
+        )
+        
+        # Manually set the complete paths after __post_init__ has run
+        train_config.ckpt_dir = complete_ckpt_dir
+        train_config.eval_video_dir = complete_eval_dir
+        train_config.log_dir = complete_log_dir
+        
+        return cls(
+            env=EnvConfig(**d.get("env", {})),
+            policy=PolicyConfig(**d.get("policy", {})),
+            train=train_config,
+        )
     
     def __repr__(self) -> str:
         return f"Config(env={self.env}, policy={self.policy}, train={self.train})"

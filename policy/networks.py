@@ -60,12 +60,17 @@ class ResNet18(nn.Module):
     As per the original Diffusion Policy paper (Section 4.3 and Appendix C.1),
     we use ResNet-18 as the visual encoder with ELU activations instead of ReLU,
     and global average pooling to produce a 256-d feature vector.
+    
+    Args:
+        in_channels: Number of input channels. Default 3 for single RGB frame.
+                     Use 6 for stacked frames (obs_horizon * 3).
+        pretrained: Whether to load ImageNet pretrained weights.
     """
 
-    def __init__(self, pretrained: bool = True) -> None:
+    def __init__(self, in_channels: int = 3, pretrained: bool = True) -> None:
         super().__init__()
         # Initial convolution (conv1 in standard ResNet)
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ELU(inplace=True)  # ELU as per Appendix C.1
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -159,12 +164,20 @@ class ResNet18Encoder(nn.Module):
 
     The network takes RGB frames and outputs a fixed-size embedding.
     Uses pretrained ImageNet weights when available.
+
+    Args:
+        out_dim: Size of the output conditioning vector.
+        in_channels: Number of input channels. Default 3 for single RGB frame.
+                     Use obs_horizon * 3 for stacked frames.
+        pretrained: Whether to load ImageNet pretrained weights.
     """
 
-    def __init__(self, out_dim: int = 256, pretrained: bool = True) -> None:
+    def __init__(self, out_dim: int = 256, in_channels: int = 3, pretrained: bool = True) -> None:
         super().__init__()
         # Use ResNet-18 with pretrained weights by default
-        self.backbone = ResNet18(pretrained=pretrained)
+        # For multi-channel input (stacked frames), we don't use pretrained weights
+        # for the first conv layer, but still use them for the rest
+        self.backbone = ResNet18(in_channels=in_channels, pretrained=pretrained)
 
         # Global average pooling to get 512-d vector
         self.gap = nn.AdaptiveAvgPool2d(1)
@@ -181,7 +194,7 @@ class ResNet18Encoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x: (B, C, H, W) - RGB frames
+            x: (B, C, H, W) - RGB frames (C can be 3 or 6 for stacked frames)
 
         Returns:
             feat: (B, out_dim)
@@ -394,17 +407,17 @@ class ObservationEncoder(nn.Module):
         self.obs_horizon = obs_horizon
 
         if obs_mode == "image":
-            # ResNet-18 expects 3-channel input
+            # For image mode, we stack frames along channel dimension
+            # and process them directly with ResNet18 (no temporal blending)
             H, W, C = obs_shape
-            in_channels = C  # ResNet expects 3 channels per frame
+            in_channels = C * obs_horizon  # e.g., 3 * 2 = 6 for obs_horizon=2
 
-            # ResNet-18 encoder with global average pooling → 256-d
-            # Pretrained weights are loaded by default
-            self.encoder = ResNet18Encoder(out_dim=out_dim, pretrained=True)
-
-            # For multi-frame input, we blend frames using a learned projection
-            self.temporal_blend = nn.Conv2d(
-                in_channels * obs_horizon, in_channels, kernel_size=1
+            # ResNet-18 encoder with multi-channel input
+            # Pretrained weights are loaded but first conv layer is reinitialized
+            self.encoder = ResNet18Encoder(
+                out_dim=out_dim, 
+                in_channels=in_channels, 
+                pretrained=True
             )
             self._obs_horizon = obs_horizon
         else:
@@ -430,24 +443,21 @@ class ObservationEncoder(nn.Module):
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            obs: (B, obs_horizon, *obs_shape)
+            obs: (B, obs_horizon, H, W, C) — HWC format from ManiSkill/dataset
 
         Returns:
             cond: (B, out_dim)
         """
         B = obs.shape[0]
         if self.obs_mode == "image":
-            # (B, T, H, W, C) → (B, T*C, H, W)
+            # (B, T, H, W, C) → (B, T*C, H, W)  — stack channels temporally
+            # This produces (B, 6, 96, 96) for obs_horizon=2
+            # The einops notation "b (t c) h w" means batch, [t*c channels], height, width
             obs_stacked = rearrange(obs, "b t h w c -> b (t c) h w")
 
-            # Blend temporal frames to single 3-channel input
-            if self._obs_horizon > 1:
-                obs_blended = self.temporal_blend(obs_stacked)
-            else:
-                obs_blended = obs_stacked
-
-            # Encode with ResNet-18
-            feats = self.encoder(obs_blended)
+            # Process stacked frames directly with ResNet18 (no blending)
+            # obs_stacked is now (B, 6, H, W) — 6 channels for 2 stacked RGB frames
+            feats = self.encoder(obs_stacked)
             return feats
         else:
             obs = obs.reshape(B, -1)

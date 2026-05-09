@@ -17,7 +17,7 @@ from pathlib import Path
 
 import torch
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
@@ -118,8 +118,21 @@ class Trainer:
             lr=tc.lr,
             weight_decay=tc.weight_decay,
         )
-        self.scheduler = CosineAnnealingLR(
+        # Use warmup + cosine annealing scheduler as per the Diffusion Policy paper
+        warmup_scheduler = LinearLR(
+            self.optimizer,
+            start_factor=0.01,  # Start at 1% of lr
+            end_factor=1.0,
+            total_iters=tc.lr_warmup_steps,
+        )
+        cosine_scheduler = CosineAnnealingLR(
             self.optimizer, T_max=tc.num_epochs
+        )
+        # Chain: warmup first, then cosine annealing
+        self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[tc.lr_warmup_steps],
         )
 
     def _build_writer(self) -> None:
@@ -154,12 +167,13 @@ class Trainer:
         print(f"[trainer] Resumed from epoch {ckpt['epoch']} ← {path}")
 
     # ── evaluation ─────────────────────────────────────────────────────────
-    def evaluate(self, epoch: int) -> dict[str, float]:
+    def evaluate(self, epoch: int, record_video: bool = True) -> dict[str, float]:
         """Roll out the current policy and report success rate + mean reward + eval loss."""
         ec, pc, tc = self.cfg.env, self.cfg.policy, self.cfg.train
 
-        video_dir = os.path.join(tc.eval_video_dir, f"epoch_{epoch:04d}")
-        os.makedirs(video_dir, exist_ok=True)
+        video_dir = os.path.join(tc.eval_video_dir, f"epoch_{epoch:04d}") if record_video else None
+        if video_dir:
+            os.makedirs(video_dir, exist_ok=True)
 
         env = make_eval_env(
             num_envs=ec.eval_num_envs,
@@ -281,7 +295,8 @@ class Trainer:
                 self._save_checkpoint(epoch)
 
             if (epoch + 1) % tc.eval_every == 0:
-                metrics = self.evaluate(epoch)
+                record_video = (epoch + 1) % tc.eval_video_every == 0
+                metrics = self.evaluate(epoch, record_video=record_video)
                 if self.writer:
                     for k, v in metrics.items():
                         self.writer.add_scalar(k, v, epoch)

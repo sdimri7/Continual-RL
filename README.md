@@ -86,7 +86,7 @@ Observation (2 frames of 96×96 RGB)
 
 **Training loss:** MSE between the true noise `ε` and the predicted noise `ε̂`.
 
-**Inference:** Start from `x_T ~ N(0,I)`, run 20 DDPM denoising steps to recover `x_0` (the clean action sequence), execute the first 8 actions.
+**Inference:** Start from `x_T ~ N(0,I)`, run 20 DDIM denoising steps to recover `x_0` (the clean action sequence), execute the first 8 actions.
 
 ### Visual Encoder
 

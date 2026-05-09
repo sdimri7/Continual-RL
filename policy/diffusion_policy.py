@@ -15,6 +15,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from .networks import ConditionalUNet1D, ObservationEncoder
@@ -79,6 +80,13 @@ class DiffusionPolicy(nn.Module):
             clip_sample=True,
             prediction_type="epsilon",
         )
+        # DDIMScheduler for inference - initialized once for efficiency
+        self.inference_scheduler = DDIMScheduler(
+            num_train_timesteps=num_diffusion_steps,
+            beta_schedule="squaredcos_cap_v2",
+            clip_sample=True,
+            prediction_type="epsilon",
+        )
 
         self.to(device)
 
@@ -116,9 +124,13 @@ class DiffusionPolicy(nn.Module):
     ) -> torch.Tensor:
         """Denoise a random action sequence conditioned on obs.
 
+        Uses DDIMScheduler for inference (supports fewer steps than DDPM).
+        DDIM provides deterministic denoising with implicit noising, enabling
+        high-quality results with 10-50x fewer steps than standard DDPM.
+
         Args:
             obs: Observation history batch.
-            num_inference_steps: DDIM-style step count (fewer = faster).
+            num_inference_steps: Number of DDIM denoising steps (20 is typical).
 
         Returns:
             action: (B, action_horizon, action_dim) – the first action_horizon
@@ -128,17 +140,19 @@ class DiffusionPolicy(nn.Module):
         obs = obs.to(self.device)
         obs_cond = self.obs_encoder(obs)
 
-        self.scheduler.set_timesteps(num_inference_steps)
+        # Use the persistent inference scheduler (initialized once in __init__)
+        # Recompute timesteps for the specified number of inference steps
+        self.inference_scheduler.set_timesteps(num_inference_steps)
 
         # Start from pure noise
         action = torch.randn(
             (B, self.pred_horizon, self.action_dim), device=self.device
         )
 
-        for t in self.scheduler.timesteps:
+        for t in self.inference_scheduler.timesteps:
             t_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
             pred_noise = self.noise_pred(action, t_batch, obs_cond)
-            action = self.scheduler.step(pred_noise, t, action).prev_sample
+            action = self.inference_scheduler.step(pred_noise, t, action).prev_sample
 
         # Return only the steps we actually execute
         return action[:, : self.action_horizon]
