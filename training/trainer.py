@@ -155,7 +155,7 @@ class Trainer:
 
     # ── evaluation ─────────────────────────────────────────────────────────
     def evaluate(self, epoch: int) -> dict[str, float]:
-        """Roll out the current policy and report success rate + mean reward."""
+        """Roll out the current policy and report success rate + mean reward + eval loss."""
         ec, pc, tc = self.cfg.env, self.cfg.policy, self.cfg.train
 
         video_dir = os.path.join(tc.eval_video_dir, f"epoch_{epoch:04d}")
@@ -205,12 +205,46 @@ class Trainer:
         env.close()
         self.policy.train()
 
+        # Compute eval loss on a sample of the training data
+        eval_loss = self._compute_eval_loss(num_batches=10)
+
         metrics = {
             "eval/mean_reward": total_reward / steps,
             "eval/success_rate": total_success / steps,
+            "eval/loss": eval_loss,
         }
         print(f"[trainer] Eval epoch {epoch}: {metrics}")
         return metrics
+
+    def _compute_eval_loss(self, num_batches: int = 10) -> float:
+        """Compute average loss on a sample of training data for evaluation."""
+        from torch.utils.data import DataLoader
+        
+        eval_loader = DataLoader(
+            self.loader.dataset,
+            batch_size=self.cfg.train.batch_size,
+            shuffle=True,
+            num_workers=2,
+            pin_memory=True,
+            drop_last=False,
+        )
+        
+        total_loss = 0.0
+        count = 0
+        
+        self.policy.eval()
+        with torch.no_grad():
+            for i, batch in enumerate(eval_loader):
+                if i >= num_batches:
+                    break
+                obs = batch["obs"].to(self.device)
+                action = batch["action"].to(self.device)
+                loss = self.policy.compute_loss(obs, action)
+                total_loss += loss.item()
+                count += 1
+        
+        self.policy.train()
+        return total_loss / count if count > 0 else 0.0
 
     # ── training loop ──────────────────────────────────────────────────────
     def train(self) -> None:

@@ -159,3 +159,89 @@ def plot_training_curve(log_dir: str) -> None:
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
+
+
+# ── training & eval metrics ─────────────────────────────────────────────────
+def plot_tensorboard_metrics(log_dir: str) -> None:
+    """Plot training and evaluation metrics from TensorBoard event files.
+
+    Reads all available scalar tags from the latest event file in log_dir and
+    plots them in a grid: train/loss, train/lr, eval/mean_reward,
+    eval/success_rate. Tags that aren't present are skipped gracefully.
+
+    Args:
+        log_dir: Directory containing TensorBoard event files.
+                 Can be a directory path or a single event file path.
+    """
+    try:
+        from tensorboard.backend.event_processing.event_accumulator import (
+            EventAccumulator,
+        )
+    except ImportError:
+        print("[viz] TensorBoard not available. Run:  pip install tensorboard")
+        return
+
+    import glob
+
+    # Allow both a directory or a single event file
+    if os.path.isdir(log_dir):
+        event_files = sorted(glob.glob(os.path.join(log_dir, "events.out.tfevents.*")))
+        if not event_files:
+            print(f"[viz] No TensorBoard event files found in {log_dir}")
+            return
+        event_path = event_files[-1]  # use latest run
+    else:
+        event_path = log_dir
+
+    ea = EventAccumulator(event_path)
+    ea.Reload()
+
+    keys = ea.scalars.Keys()
+    if not keys:
+        print("[viz] No scalars found in event file.")
+        return
+
+    # Define which metrics to plot and their display config
+    metrics = [
+        ("train/loss", "Training Loss", "loss"),
+        ("train/lr", "Learning Rate", "lr"),
+        ("eval/mean_reward", "Eval Mean Reward", "reward"),
+        ("eval/success_rate", "Eval Success Rate", "rate"),
+        ("eval/loss", "Eval Loss", "loss"),
+    ]
+
+    # Collect available plots
+    available = [(tag, title, unit) for tag, title, unit in metrics if tag in keys]
+
+    if not available:
+        print(f"[viz] None of the expected scalar tags found. Available: {keys}")
+        return
+
+    n = len(available)
+    n_cols = min(2, n)
+    n_rows = (n + 1) // 2
+
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows))
+    if n == 1:
+        axs = [axs]
+    else:
+        axs = axs.flatten()
+
+    for idx, (tag, title, unit) in enumerate(available):
+        events = ea.scalars.Items(tag)
+        steps = [e.step for e in events]
+        values = [e.value for e in events]
+
+        axs[idx].plot(steps, values, marker="o", markersize=3)
+        axs[idx].set_xlabel("Epoch")
+        axs[idx].set_ylabel(unit)
+        axs[idx].set_title(title)
+        axs[idx].grid(True, alpha=0.3)
+
+    # Hide unused subplots
+    for idx in range(n, len(axs)):
+        axs[idx].axis("off")
+
+    plt.suptitle(f"Training & Eval Metrics", fontsize=14)
+    plt.tight_layout()
+    plt.show()
