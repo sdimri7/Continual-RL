@@ -186,9 +186,11 @@ class Trainer:
         obs, _ = env.reset(seed=epoch)
 
         total_reward = 0.0
-        total_success = 0.0
+        successes = 0
+        num_episodes = 0
         steps = 0
         max_steps = 200
+        episode_success = False
 
         while steps < max_steps:
             img = self._extract_obs(obs)
@@ -210,11 +212,20 @@ class Trainer:
                     torch.from_numpy(action_np).to(self.device)
                 )
                 total_reward += rew.mean().item()
-                if "success" in info:
-                    total_success += info["success"].float().mean().item()
+                if "success" in info and info["success"].any():
+                    episode_success = True
                 steps += 1
                 if (term | trunc).any():
+                    num_episodes += 1
+                    successes += int(episode_success)
+                    episode_success = False
+                    obs_buffer = []  # clear stale frames before next episode
+                    obs, _ = env.reset()
                     break
+
+        # Count any episode still in progress at the step cap as one episode
+        if num_episodes == 0:
+            num_episodes = 1
 
         env.close()
         self.policy.train()
@@ -224,7 +235,7 @@ class Trainer:
 
         metrics = {
             "eval/mean_reward": total_reward / steps,
-            "eval/success_rate": total_success / steps,
+            "eval/success_rate": successes / num_episodes,
             "eval/loss": eval_loss,
         }
         print(f"[trainer] Eval epoch {epoch}: {metrics}")

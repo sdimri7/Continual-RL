@@ -406,7 +406,7 @@ class ObservationEncoder(nn.Module):
         self.obs_mode = obs_mode
         self.obs_horizon = obs_horizon
 
-        if obs_mode == "image":
+        if obs_mode in ("image", "rgb"):
             # For image mode, we stack frames along channel dimension
             # and process them directly with ResNet18 (no temporal blending)
             H, W, C = obs_shape
@@ -449,7 +449,7 @@ class ObservationEncoder(nn.Module):
             cond: (B, out_dim)
         """
         B = obs.shape[0]
-        if self.obs_mode == "image":
+        if self.obs_mode in ("image", "rgb"):
             # (B, T, H, W, C) → (B, T*C, H, W)  — stack channels temporally
             # This produces (B, 6, 96, 96) for obs_horizon=2
             # The einops notation "b (t c) h w" means batch, [t*c channels], height, width
