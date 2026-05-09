@@ -2,11 +2,13 @@
 PyTorch datasets for Diffusion Policy training.
 
 PushTDemoDataset  – loads raw ManiSkill .h5 trajectories and returns
-                    (obs_seq, action_seq) windows ready for imitation learning.
+                    (obs_seq, state_seq, action_seq) windows ready for
+                    imitation learning.
 
-DiffusionPolicyDataset – wraps PushTDemoDataset to return the exact
-                          (obs_cond, noisy_action, noise, timestep) format
-                          expected by the Diffusion Policy training loop.
+DiffusionPolicyDataset – thin wrapper that passes items through unchanged.
+                          Actions stay in their native [-1, 1] range (the
+                          pd_ee_delta_pos action space guarantees this), so
+                          no normaliser is applied.
 """
 
 from __future__ import annotations
@@ -25,20 +27,19 @@ class PushTDemoDataset(Dataset):
     """Sliding-window dataset over Push-T expert demonstrations.
 
     Each item is a dict with keys:
-        "obs"     – float32 tensor (obs_horizon, *obs_shape)
-        "action"  – float32 tensor (pred_horizon, action_dim)
+        "obs"    – float32 tensor (obs_horizon, H, W, C) in [0, 1]
+        "state"  – float32 tensor (obs_horizon, state_dim)  concatenated
+                   proprioceptive state from obs/agent/* and obs/extra/*
+        "action" – float32 tensor (pred_horizon, action_dim) in [-1, 1]
 
     Args:
-        traj_path: Path to the converted .h5 file (rgb + pd_ee_delta_pos).
-        obs_horizon: Number of past observations used as conditioning (Toy: 2).
-        pred_horizon: Number of future actions to predict (Toy: 16).
-        obs_key: Key inside each trajectory for observations.
-                 Use "obs/agent/qpos" for state, or
-                 "obs/sensor_data/base_camera/rgb" for images.
-        action_key: Key for actions (default "actions").
-        image_size: Resize images to (H, W) if obs_key is an image. None = no resize.
-        pad_before: Pad the start of each episode so every timestep can be
-                    a valid sample (copies the first frame).
+        traj_path:   Path to the converted .h5 file (rgb + pd_ee_delta_pos).
+        obs_horizon: Number of past observations used as conditioning (default: 2).
+        pred_horizon: Number of future actions to predict (default: 16).
+        obs_key:     HDF5 key for image observations.
+        action_key:  HDF5 key for actions.
+        image_size:  Resize images to (H, W). None = no resize.
+        pad_before:  Pad the start of each episode by repeating the first frame.
     """
 
     def __init__(
@@ -57,7 +58,8 @@ class PushTDemoDataset(Dataset):
         self.action_key = action_key
         self.image_size = image_size
 
-        self._samples: list[tuple[np.ndarray, np.ndarray]] = []
+        # Each sample is (obs_window, state_window, act_window)
+        self._samples: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         self._load(traj_path, pad_before)
 
     # ── loading ────────────────────────────────────────────────────────────
@@ -67,48 +69,101 @@ class PushTDemoDataset(Dataset):
             traj_keys = [k for k in f.keys() if k.startswith("traj_")]
             for tk in traj_keys:
                 traj = f[tk]
-                obs = self._read_obs(traj)     # (T, *obs_shape)
+                obs = self._read_obs(traj)       # (T or T+1, H, W, C)
+                state = self._read_state(traj)   # (T or T+1, state_dim) or None
                 actions = traj[self.action_key][:]  # (T, action_dim)
                 T = len(actions)
 
                 if obs is None or len(obs) == 0:
-                    # No obs stored in HDF5 - this happens with "none" obs mode
-                    # Create dummy observations from action space dim
                     action_dim = actions.shape[-1]
                     obs = np.zeros((T, action_dim), dtype=np.float32)
-                    print(f"  [dataset] No obs in HDF5, using dummy zeros (action_dim={action_dim})")
+                    print(f"  [dataset] No obs in HDF5, using zeros (action_dim={action_dim})")
+
+                if state is None:
+                    # Fallback: empty state so the pipeline stays consistent
+                    state = np.zeros((len(obs), 0), dtype=np.float32)
 
                 if pad_before:
                     pad_obs = np.repeat(obs[:1], self.obs_horizon - 1, axis=0)
                     obs = np.concatenate([pad_obs, obs], axis=0)
 
-                # slide window
+                    pad_state = np.repeat(state[:1], self.obs_horizon - 1, axis=0)
+                    state = np.concatenate([pad_state, state], axis=0)
+
                 for t in range(T - self.pred_horizon + 1):
                     obs_window = obs[t: t + self.obs_horizon]
+                    state_window = state[t: t + self.obs_horizon]
                     act_window = actions[t: t + self.pred_horizon]
-                    self._samples.append((obs_window.copy(), act_window.copy()))
+                    self._samples.append(
+                        (obs_window.copy(), state_window.copy(), act_window.copy())
+                    )
 
         print(f"[dataset] {len(self._samples)} samples loaded.")
+        if self._samples:
+            _state_dim = self._samples[0][1].shape[-1]
+            print(f"[dataset] state_dim={_state_dim}")
 
     def _read_obs(self, traj: h5py.Group) -> np.ndarray | None:
-        """Read observations from trajectory. Returns None if obs key not found."""
+        """Read image observations; returns (T, H, W, C) float32 in [0, 1]."""
         try:
             keys = self.obs_key.split("/")
             node = traj
             for k in keys:
                 node = node[k]
-            obs = node[:]  # (T, …)
+            obs = node[:]
 
             if self.image_size is not None and obs.ndim == 4:
                 obs = self._resize_images(obs)
 
             obs = obs.astype(np.float32)
             if obs.max() > 1.5:
-                obs = obs / 255.0  # normalise uint8 images to [0, 1]
-
+                obs = obs / 255.0
             return obs
         except (KeyError, TypeError):
             return None
+
+    def _read_state(self, traj: h5py.Group) -> np.ndarray | None:
+        """Concatenate all leaf arrays under obs/agent and obs/extra.
+
+        Mirrors the official ManiSkill baseline:
+            list(obs["agent"].values()) + list(obs["extra"].values())
+        """
+        parts: list[np.ndarray] = []
+        for group_path in ("obs/agent", "obs/extra"):
+            keys = group_path.split("/")
+            try:
+                node = traj
+                for k in keys:
+                    node = node[k]
+                parts.extend(self._collect_leaves(node))
+            except (KeyError, TypeError):
+                pass
+
+        if not parts:
+            return None
+
+        # All parts share the same T (or T+1) leading dimension
+        # Flatten each to (T, -1) and concatenate along dim 1
+        flat = []
+        for arr in parts:
+            arr = arr.astype(np.float32)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            elif arr.ndim > 2:
+                arr = arr.reshape(arr.shape[0], -1)
+            flat.append(arr)
+
+        return np.concatenate(flat, axis=-1)
+
+    @staticmethod
+    def _collect_leaves(node: h5py.Group | h5py.Dataset) -> list[np.ndarray]:
+        """Recursively collect all Dataset arrays under an HDF5 group."""
+        if isinstance(node, h5py.Dataset):
+            return [node[:]]
+        arrays: list[np.ndarray] = []
+        for key in node.keys():
+            arrays.extend(PushTDemoDataset._collect_leaves(node[key]))
+        return arrays
 
     def _resize_images(self, imgs: np.ndarray) -> np.ndarray:
         """Resize a batch of (T, H, W, C) images using cv2 if available."""
@@ -131,22 +186,27 @@ class PushTDemoDataset(Dataset):
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        obs, act = self._samples[idx]
+        obs, state, act = self._samples[idx]
         return {
             "obs": torch.from_numpy(obs),
+            "state": torch.from_numpy(state),
             "action": torch.from_numpy(act),
         }
+
+    @property
+    def state_dim(self) -> int:
+        """Dimensionality of the state vector (0 if no state available)."""
+        if not self._samples:
+            return 0
+        return self._samples[0][1].shape[-1]
 
 
 # ── normalisation statistics ───────────────────────────────────────────────
 class Normalizer:
-    """Min-max normaliser that maps values to [-1, 1].
+    """Kept for backward compatibility. Not used for action normalisation.
 
-    Fit once on the full dataset, then save/load the stats so you don't
-    recompute across sessions.
-
-    Args:
-        save_path: If given, stats are stored as a .npz file on Drive.
+    The pd_ee_delta_pos action space is already bounded to [-1, 1], matching
+    the DDPM scheduler's clip_sample=True assumption. No scaling is needed.
     """
 
     def __init__(self, save_path: str | None = None) -> None:
@@ -154,62 +214,42 @@ class Normalizer:
         self.stats: dict[str, np.ndarray] = {}
 
     def fit(self, dataset: PushTDemoDataset) -> None:
-        obs_list, act_list = [], []
-        for item in dataset:
-            obs_list.append(item["obs"].numpy())
-            act_list.append(item["action"].numpy())
-
-        obs_all = np.concatenate(obs_list, axis=0)
-        act_all = np.concatenate(act_list, axis=0)
-
-        self.stats = {
-            "obs_min": obs_all.min(axis=0),
-            "obs_max": obs_all.max(axis=0),
-            "act_min": act_all.min(axis=0),
-            "act_max": act_all.max(axis=0),
-        }
-        if self.save_path:
-            np.savez(self.save_path, **self.stats)
-            print(f"[dataset] Normaliser stats saved to {self.save_path}.")
+        pass  # no-op: actions stay in native [-1, 1]
 
     def load(self, path: str | None = None) -> None:
-        path = path or self.save_path
-        data = np.load(path)
-        self.stats = {k: data[k] for k in data.files}
-        print(f"[dataset] Normaliser stats loaded from {path}.")
+        pass  # no-op
 
     def normalize_action(self, x: torch.Tensor) -> torch.Tensor:
-        lo = torch.tensor(self.stats["act_min"], dtype=x.dtype, device=x.device)
-        hi = torch.tensor(self.stats["act_max"], dtype=x.dtype, device=x.device)
-        return 2.0 * (x - lo) / (hi - lo + 1e-8) - 1.0
+        return x  # identity
 
     def unnormalize_action(self, x: torch.Tensor) -> torch.Tensor:
-        lo = torch.tensor(self.stats["act_min"], dtype=x.dtype, device=x.device)
-        hi = torch.tensor(self.stats["act_max"], dtype=x.dtype, device=x.device)
-        return (x + 1.0) / 2.0 * (hi - lo + 1e-8) + lo
+        return x  # identity
 
 
 # ── diffusion policy dataset ───────────────────────────────────────────────
 class DiffusionPolicyDataset(Dataset):
-    """Wraps PushTDemoDataset and applies action normalisation.
+    """Thin pass-through wrapper around PushTDemoDataset.
 
-    Returns dicts with:
-        "obs"    – (obs_horizon, *obs_shape) float32
-        "action" – (pred_horizon, action_dim) float32, normalised to [-1, 1]
+    Actions are NOT normalised — they are already in [-1, 1] for the
+    pd_ee_delta_pos controller and clip_sample=True in the DDPM scheduler
+    enforces this range at inference time.
+
+    Returns dicts with keys: "obs", "state", "action".
     """
 
     def __init__(
         self,
         base_dataset: PushTDemoDataset,
-        normalizer: Normalizer,
+        normalizer: Normalizer | None = None,
     ) -> None:
         self.base = base_dataset
-        self.normalizer = normalizer
 
     def __len__(self) -> int:
         return len(self.base)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        item = self.base[idx]
-        item["action"] = self.normalizer.normalize_action(item["action"])
-        return item
+        return self.base[idx]
+
+    @property
+    def state_dim(self) -> int:
+        return self.base.state_dim

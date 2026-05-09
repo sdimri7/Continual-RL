@@ -381,18 +381,23 @@ class ConditionalUNet1D(nn.Module):
 class ObservationEncoder(nn.Module):
     """Encode a sequence of observations into a flat conditioning vector.
 
+    Matches the official ManiSkill diffusion policy baseline (train_rgbd.py):
+    each frame is encoded independently by the visual encoder, then the visual
+    feature is concatenated per-timestep with the proprioceptive state, and
+    the result is flattened across the obs_horizon dimension.
+
     Supports two modes:
 
-    * ``"image"``  – stacked RGB frames passed through ResNet-18 encoder.
-    * ``"state"``  – flat state vectors projected by an MLP.
+    * ``"image"`` / ``"rgb"`` – per-frame ResNet-18 + state concat + flatten.
+    * ``"state"``             – flat state vectors projected by an MLP.
 
     Args:
-        obs_mode: "image" or "state".
-        obs_horizon: Number of observations in the history window.
-        obs_shape: Shape of a single observation.
-            For images: (H, W, C).
-            For state:  (state_dim,).
-        out_dim: Size of the output conditioning vector.
+        obs_mode:          "image", "rgb", or "state".
+        obs_horizon:       Number of observations in the history window.
+        obs_shape:         Shape of a single image observation (H, W, C).
+        visual_feature_dim: Size of the per-frame visual embedding (default 256).
+        state_dim:         Dimensionality of the proprioceptive state vector
+                           appended per timestep (0 = no state).
     """
 
     def __init__(
@@ -400,37 +405,35 @@ class ObservationEncoder(nn.Module):
         obs_mode: str,
         obs_horizon: int,
         obs_shape: tuple[int, ...],
-        out_dim: int = 256,
+        visual_feature_dim: int = 256,
+        state_dim: int = 0,
     ) -> None:
         super().__init__()
         self.obs_mode = obs_mode
-        self.obs_horizon = obs_horizon
+        self._obs_horizon = obs_horizon
+        self.state_dim = state_dim
 
         if obs_mode in ("image", "rgb"):
-            # For image mode, we stack frames along channel dimension
-            # and process them directly with ResNet18 (no temporal blending)
             H, W, C = obs_shape
-            in_channels = C * obs_horizon  # e.g., 3 * 2 = 6 for obs_horizon=2
-
-            # ResNet-18 encoder with multi-channel input
-            # Pretrained weights are loaded but first conv layer is reinitialized
+            # Each frame encoded independently (shared weights), C channels each
             self.encoder = ResNet18Encoder(
-                out_dim=out_dim, 
-                in_channels=in_channels, 
-                pretrained=True
+                out_dim=visual_feature_dim,
+                in_channels=C,
+                pretrained=True,
             )
-            self._obs_horizon = obs_horizon
+            self.visual_feature_dim = visual_feature_dim
+            # Output: obs_horizon * (visual_feature_dim + state_dim)
+            self.out_dim = obs_horizon * (visual_feature_dim + state_dim)
         else:
-            state_dim = math.prod(obs_shape) * obs_horizon
+            flat_dim = math.prod(obs_shape) * obs_horizon
             self.encoder = nn.Sequential(
-                nn.Linear(state_dim, 256),
+                nn.Linear(flat_dim, 256),
                 nn.Mish(),
-                nn.Linear(256, out_dim),
+                nn.Linear(256, visual_feature_dim),
                 nn.Mish(),
             )
             self.proj = nn.Identity()
-
-        self.out_dim = out_dim
+            self.out_dim = visual_feature_dim
 
     @property
     def obs_horizon(self) -> int:
@@ -440,25 +443,34 @@ class ObservationEncoder(nn.Module):
     def obs_horizon(self, value: int) -> None:
         self._obs_horizon = value
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        obs: torch.Tensor,
+        state: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Args:
-            obs: (B, obs_horizon, H, W, C) — HWC format from ManiSkill/dataset
+            obs:   (B, obs_horizon, H, W, C) — HWC float in [0, 1]
+            state: (B, obs_horizon, state_dim) — proprioceptive state, or None
 
         Returns:
-            cond: (B, out_dim)
+            cond: (B, obs_horizon * (visual_feature_dim + state_dim))
         """
         B = obs.shape[0]
         if self.obs_mode in ("image", "rgb"):
-            # (B, T, H, W, C) → (B, T*C, H, W)  — stack channels temporally
-            # This produces (B, 6, 96, 96) for obs_horizon=2
-            # The einops notation "b (t c) h w" means batch, [t*c channels], height, width
-            obs_stacked = rearrange(obs, "b t h w c -> b (t c) h w")
+            T = obs.shape[1]
+            # Process each frame independently with shared ResNet weights
+            # (B, T, H, W, C) → (B*T, C, H, W)
+            obs_flat = obs.reshape(B * T, *obs.shape[2:])
+            obs_flat = obs_flat.permute(0, 3, 1, 2).contiguous()  # (B*T, C, H, W)
+            feats = self.encoder(obs_flat)          # (B*T, visual_feature_dim)
+            feats = feats.reshape(B, T, -1)         # (B, T, visual_feature_dim)
 
-            # Process stacked frames directly with ResNet18 (no blending)
-            # obs_stacked is now (B, 6, H, W) — 6 channels for 2 stacked RGB frames
-            feats = self.encoder(obs_stacked)
-            return feats
+            if state is not None and self.state_dim > 0:
+                # Concatenate proprioceptive state per timestep
+                feats = torch.cat([feats, state], dim=-1)  # (B, T, visual_feature_dim + state_dim)
+
+            return feats.flatten(start_dim=1)       # (B, T * (visual_feature_dim + state_dim))
         else:
             obs = obs.reshape(B, -1)
             return self.proj(self.encoder(obs))
