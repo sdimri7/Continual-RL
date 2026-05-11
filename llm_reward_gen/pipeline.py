@@ -1,13 +1,16 @@
-"""LLM pipeline: video -> frames -> prompt -> LLM -> code -> validate -> save."""
+"""LLM pipeline: video -> frames -> prompt -> LLM -> code -> validate -> save.
 
-import hashlib
-import json
+Uses OpenRouter (OpenAI-compatible API) via the `openai` Python SDK.
+Set the OPENROUTER_API_KEY environment variable before running.
+"""
+
+import os
 import re
 import time
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+from openai import OpenAI
 
 from llm_reward_gen.prompts import (
     EPISODE_CONFIG_SYSTEM_PROMPT,
@@ -37,18 +40,17 @@ def _parse_code_from_response(response_text: str) -> str:
 def _build_vision_messages(
     user_prompt: str, frame_b64_list: list[str]
 ) -> list[dict]:
-    """Build the message content array with interleaved text and images."""
-    content = []
-    content.append({"type": "text", "text": user_prompt})
-    for i, b64 in enumerate(frame_b64_list):
+    """Build the message content array with text and base64 images.
+
+    Uses the OpenAI image_url format (data URI), which OpenRouter accepts for
+    all vision-capable models (Claude, GPT-4o, Gemini, etc.).
+    """
+    content: list[dict] = [{"type": "text", "text": user_prompt}]
+    for b64 in frame_b64_list:
         content.append(
             {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": b64,
-                },
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
             }
         )
     return content
@@ -57,20 +59,41 @@ def _build_vision_messages(
 def _call_llm(
     system_prompt: str,
     user_content: list[dict],
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "anthropic/claude-sonnet-4",
     temperature: float = 0.2,
     max_tokens: int = 4096,
 ) -> str:
-    """Call Anthropic API and return the text response."""
-    client = anthropic.Anthropic()
-    message = client.messages.create(
+    """Call OpenRouter API and return the text response.
+
+    Reads OPENROUTER_API_KEY from the environment.
+    Model strings follow OpenRouter's format: "provider/model-name".
+    Examples:
+        "anthropic/claude-sonnet-4"
+        "anthropic/claude-opus-4"
+        "openai/gpt-4o"
+        "google/gemini-2.0-flash-001"
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "OPENROUTER_API_KEY environment variable is not set. "
+            "Get a key at https://openrouter.ai/keys and export it:\n"
+            "  export OPENROUTER_API_KEY='sk-or-...'"
+        )
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_content}],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
     )
-    return message.content[0].text
+    return response.choices[0].message.content
 
 
 def _save_code(code: str, name: str, version: int) -> Path:
@@ -130,7 +153,7 @@ def generate_reward_function(
     failure_description: str,
     quantitative_chars: list[str],
     baseline_success_rate: float = 60.0,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "anthropic/claude-sonnet-4",
     temperature: float = 0.2,
     num_frames: int = 8,
     max_retries: int = 3,
@@ -217,7 +240,7 @@ def generate_episode_config(
     failure_mode: str,
     failure_description: str,
     quantitative_chars: list[str],
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "anthropic/claude-sonnet-4",
     temperature: float = 0.2,
     num_frames: int = 8,
     max_retries: int = 3,

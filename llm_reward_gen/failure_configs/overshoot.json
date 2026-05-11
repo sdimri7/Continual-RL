@@ -8,7 +8,7 @@
         "Policy success rate in this regime: TO BE FILLED from T-II evaluation"
     ],
     "baseline_success_rate": 62,
-    "model": "claude-sonnet-4-20250514",
+    "model": "anthropic/claude-sonnet-4",
     "temperature": 0.2,
     "num_frames": 8,
     "max_retries": 3

@@ -29,7 +29,7 @@ Continual-RL/
 │   ├── video_analysis.py              #   Frame extraction from failure mp4s, failure
 │   │                                  #   mode heuristics from state trajectories
 │   ├── prompts.py                     #   Exact prompt templates (reward + episode config)
-│   ├── pipeline.py                    #   Anthropic API client: video→frames→LLM→code
+│   ├── pipeline.py                    #   OpenRouter API client: video→frames→LLM→code
 │   │                                  #   with iterative refinement on validation errors
 │   ├── custom_envs.py                 #   PushTLLMRewardEnv — ManiSkill v3 subclass;
 │   │                                  #   hot-loads generated reward & episode functions;
@@ -114,7 +114,7 @@ source rl_env/bin/activate
 pip install mani-skill
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install diffusers accelerate tyro tensorboard wandb opencv-python h5py
-pip install anthropic          # for T-III LLM pipeline
+pip install openai             # for T-III LLM pipeline (OpenRouter via openai SDK)
 
 # Install the diffusion policy package (needed for T-I imports)
 cd official_diffusion_policy && pip install -e . && cd ..
@@ -270,7 +270,7 @@ cd ..
 ### Prerequisites
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # Set your API key
+export OPENROUTER_API_KEY="sk-or-..."   # Get a key at https://openrouter.ai/keys
 ```
 
 ### 1. Generate reward function and episode sampler from a failure video
@@ -503,7 +503,7 @@ To use Policy Decorator residual training with Push-T, adapt `policy_decorator/o
 ```bash
 # Setup
 source rl_env/bin/activate
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENROUTER_API_KEY="sk-or-..."
 
 # T-I: Train
 cd official_diffusion_policy
