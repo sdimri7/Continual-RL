@@ -1,0 +1,15 @@
+{
+    "failure_mode": "rotation_failure",
+    "failure_description": "The robot successfully pushes the T-block close to the goal XY position (within 0.03m) but fails to achieve the correct orientation. The T-block ends up rotated 60-120 degrees off the goal rotation, and the policy oscillates the end-effector around the block without correcting the orientation. The position reward misleads the policy to stop once positionally close, even though angular alignment is insufficient for the 90% overlap success criterion.",
+    "quantitative_chars": [
+        "T-block final XY distance to goal < 0.04m but intersection < 90%",
+        "Final rotation error |cos(z_euler_block - goal_z_rot) - 1| > 0.3",
+        "Failure probability > 70% when initial T-block Z-rotation in [1.5, 3.5] rad",
+        "Policy success rate in this regime: TO BE FILLED from T-II evaluation"
+    ],
+    "baseline_success_rate": 62,
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0.2,
+    "num_frames": 8,
+    "max_retries": 3
+}

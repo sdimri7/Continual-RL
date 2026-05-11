@@ -1,0 +1,15 @@
+{
+    "failure_mode": "overshoot",
+    "failure_description": "The robot pushes the T-block past the goal region. The block initially passes through the goal area (achieving >50% overlap momentarily) but the policy continues pushing, causing the block to overshoot. The block then oscillates back and forth around the goal without settling. The sparse success signal provides no gradient to indicate the block was close, leading to momentum-based failure.",
+    "quantitative_chars": [
+        "T-block XY trajectory passes within 0.03m of goal but final position > 0.06m away",
+        "Block displacement oscillates: distance to goal crosses threshold at least twice",
+        "Failure probability > 65% when initial T-block position is within x in [-0.22, -0.10], y in [0.02, 0.16]",
+        "Policy success rate in this regime: TO BE FILLED from T-II evaluation"
+    ],
+    "baseline_success_rate": 62,
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0.2,
+    "num_frames": 8,
+    "max_retries": 3
+}
