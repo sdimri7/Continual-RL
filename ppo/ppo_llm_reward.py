@@ -198,10 +198,12 @@ def make_env(
         control_mode=control_mode,
         sim_backend="physx_cuda",
         render_mode="cameras" if video_dir else None,
-        reward_code_path=reward_code_path,
-        episode_config_code_path=episode_config_path,
-        failure_bias_ratio=failure_bias_ratio,
     )
+    # Only pass LLM-specific kwargs for the custom env; PushT-v1 doesn't accept them
+    if "LLMReward" in env_id:
+        env_kwargs["reward_code_path"] = reward_code_path
+        env_kwargs["episode_config_code_path"] = episode_config_path
+        env_kwargs["failure_bias_ratio"] = failure_bias_ratio
     env = gym.make(
         env_id,
         num_envs=num_envs,
