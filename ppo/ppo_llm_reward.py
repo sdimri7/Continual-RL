@@ -197,7 +197,7 @@ def make_env(
         reward_mode="dense",
         control_mode=control_mode,
         sim_backend="physx_cuda",
-        render_mode="cameras" if video_dir else None,
+        render_mode="rgb_array" if video_dir else None,
     )
     # Only pass LLM-specific kwargs for the custom env; PushT-v1 doesn't accept them
     if "LLMReward" in env_id:
