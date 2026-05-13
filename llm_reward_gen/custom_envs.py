@@ -55,7 +55,8 @@ class PushTLLMRewardEnv(PushTEnv):
         failure_bias_ratio: float = 0.7,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        # Set these BEFORE super().__init__() because it calls reset() ->
+        # _initialize_episode(), which reads self._episode_config_fn.
         self._reward_fn = None
         self._episode_config_fn = None
         self._failure_bias_ratio = failure_bias_ratio
@@ -68,6 +69,8 @@ class PushTLLMRewardEnv(PushTEnv):
             self._episode_config_fn = _load_function_from_file(
                 episode_config_code_path, "sample_failure_episode_config"
             )
+
+        super().__init__(*args, **kwargs)
 
     def compute_dense_reward(self, obs, action, info):
         if self._reward_fn is not None:
