@@ -1,13 +1,14 @@
 {
-    "failure_mode": "rotation_failure",
-    "failure_description": "The robot successfully pushes the T-block close to the goal XY position (within 0.03m) but fails to achieve the correct orientation. The T-block ends up rotated 60-120 degrees off the goal rotation, and the policy oscillates the end-effector around the block without correcting the orientation. The position reward misleads the policy to stop once positionally close, even though angular alignment is insufficient for the 90% overlap success criterion.",
+    "failure_mode": "CoM-Distance Dependent Rotation Failure",
+    "failure_description": "The robot fails to achieve the target orientation when the block's center of mass (CoM) is significantly displaced from the destination center. The failure is uniquely sensitive to spatial CoM positioning rather than initial angular error. While the policy successfully corrects 180-degree rotational misalignments when the CoM is localized, it consistently fails to rotate the block—even from near-correct angles—if the CoM is displaced by approximately half the block's length.",
     "quantitative_chars": [
-        "T-block final XY distance to goal < 0.04m but intersection < 90%",
-        "Final rotation error |cos(z_euler_block - goal_z_rot) - 1| > 0.3",
-        "Failure probability > 70% when initial T-block Z-rotation in [1.5, 3.5] rad",
-        "Policy success rate in this regime: TO BE FILLED from T-II evaluation"
+        "Failure triggered when CoM distance to goal $|d_{CoM}| \\approx 0.5 \\times$ block length",
+        "Success rate = 100% for initial rotation errors of 180° given $|d_{CoM}| < 0.25 \\times$ length",
+        "Rotational correction stalls for angular errors $< 30°$ if $|d_{CoM}| > 0.5 \\times$ length",
+        "Failure probability increases as a function of Euclidean CoM distance rather than angular delta",
+        "Policy success rate in this regime: 0% (based on current evaluation trials)"
     ],
-    "baseline_success_rate": 62,
+    "baseline_success_rate": 0,
     "model": "anthropic/claude-sonnet-4",
     "temperature": 0.2,
     "num_frames": 8,
