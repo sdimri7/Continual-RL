@@ -1,5 +1,5 @@
 {
-    "failure_mode": "CoM-Distance Dependent Rotation Failure",
+    "failure_mode": "rotation_failure",
     "failure_description": "The robot fails to achieve the target orientation when the block's center of mass (CoM) is significantly displaced from the destination center. The failure is uniquely sensitive to spatial CoM positioning rather than initial angular error. While the policy successfully corrects 180-degree rotational misalignments when the CoM is localized, it consistently fails to rotate the block—even from near-correct angles—if the CoM is displaced by approximately half the block's length.",
     "quantitative_chars": [
         "Failure triggered when CoM distance to goal $|d_{CoM}| \\approx 0.5 \\times$ block length",
